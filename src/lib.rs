@@ -25,18 +25,12 @@
 pub use piet;
 pub use tiny_skia;
 
-use cosmic_text::CacheKey;
+use cosmic_text::{Command as ZenoCommand, SwashCache};
 use piet::kurbo::{self, Affine, PathEl, Shape};
 use piet::Error as Pierror;
 
-use std::collections::hash_map::{Entry, HashMap};
 use std::mem;
-use std::rc::Rc;
-
-use swash::scale::image::Image as SwashImage;
-use swash::scale::outline::Outline as SwashOutline;
-use swash::scale::ScaleContext;
-use swash::zeno::{Command as ZenoCommand, Vector as ZenoVector};
+use std::slice;
 
 use tiny_skia as ts;
 use tinyvec::TinyVec;
@@ -50,16 +44,11 @@ pub struct Cache {
     /// The text renderer object.
     text: Text,
 
-    /// Scaling context for glyphs.
-    scaler: ScaleContext,
+    /// Drawn glyphs.
+    glyph_cache: Option<SwashCache>,
 
-    /// Map between glyph keys and glyph images.
-    glyph_cache: HashMap<CacheKey, GlyphData>,
-}
-
-enum GlyphData {
-    Image(SwashImage),
-    Outline(SwashOutline),
+    /// Allocation to hold dashes in.
+    dash_buffer: Vec<f32>,
 }
 
 impl Default for Cache {
@@ -67,8 +56,8 @@ impl Default for Cache {
         Self {
             path_builder: Some(PathBuilder::new()),
             text: Text(piet_cosmic_text::Text::new()),
-            scaler: ScaleContext::new(),
-            glyph_cache: HashMap::default(),
+            glyph_cache: Some(SwashCache::new()),
+            dash_buffer: vec![],
         }
     }
 }
@@ -233,7 +222,7 @@ impl RenderContext<'_, '_> {
         &mut self,
         shape: impl Shape,
         shader: tiny_skia::Shader<'_>,
-        stroke: ts::Stroke,
+        stroke: &ts::Stroke,
     ) {
         // Get the last state out.
         let Self {
@@ -271,15 +260,75 @@ impl RenderContext<'_, '_> {
             (cvt_affine(real_transform), state.clip.as_ref())
         };
 
-        target.stroke_path(&path, &paint, &stroke, transform, mask);
+        target.stroke_path(&path, &paint, stroke, transform, mask);
 
         // Keep the allocation around.
         self.cache.path_builder = Some(path.clear());
     }
 
+    #[allow(clippy::if_same_then_else)]
     fn draw_glyph(&mut self, pos: kurbo::Point, glyph: &cosmic_text::LayoutGlyph, run_y: f32) {
-        // Figure out what kind of outline to render.
-        self.last_error = Err(Pierror::Unimplemented);
+        // Take the glyph cache or make a new one.
+        let mut glyph_cache = self
+            .cache
+            .glyph_cache
+            .take()
+            .unwrap_or_else(SwashCache::new);
+
+        let physical = glyph.physical((0., 0.), 1.0);
+        self.cache.text.clone().0.with_font_system_mut(|system| {
+            // Try to get the font outline, which we can draw directly with tiny-skia.
+            if let Some(outline) = glyph_cache.get_outline_commands(system, physical.cache_key) {
+                let offset = kurbo::TranslateScale::new(
+                    kurbo::Vec2::new(
+                        pos.x + physical.x as f64 + physical.cache_key.x_bin.as_float() as f64,
+                        pos.y
+                            + run_y as f64
+                            + physical.y as f64
+                            + physical.cache_key.y_bin.as_float() as f64,
+                    ),
+                    1.0,
+                );
+                let color = glyph.color_opt.map_or(
+                    {
+                        let (r, g, b, a) = piet::util::DEFAULT_TEXT_COLOR.as_rgba();
+                        ts::Color::from_rgba(r as f32, g as f32, b as f32, a as f32)
+                            .expect("default text color should be valid")
+                    },
+                    |c| {
+                        let [r, g, b, a] = [c.r(), c.g(), c.b(), c.a()];
+                        ts::Color::from_rgba8(r, g, b, a)
+                    },
+                );
+
+                self.fill_impl(
+                    ZenoShape {
+                        cmds: outline,
+                        offset,
+                    },
+                    ts::Shader::SolidColor(color),
+                    ts::FillRule::EvenOdd,
+                );
+            } else {
+                // Blit the image onto the target.
+                let default_color = {
+                    let (r, g, b, a) = piet::util::DEFAULT_TEXT_COLOR.as_rgba8();
+                    cosmic_text::Color::rgba(r, g, b, a)
+                };
+                glyph_cache.with_pixels(system, physical.cache_key, default_color, |x, y, clr| {
+                    let [r, g, b, a] = [clr.r(), clr.g(), clr.b(), clr.a()];
+                    let color = ts::Color::from_rgba8(r, g, b, a);
+
+                    self.fill_impl(
+                        kurbo::Rect::from_origin_size((x as f64, y as f64), (1., 1.)),
+                        Shader::SolidColor(color),
+                        ts::FillRule::EvenOdd,
+                    );
+                });
+            }
+        });
+
+        self.cache.glyph_cache = Some(glyph_cache);
     }
 }
 
@@ -364,7 +413,13 @@ impl piet::RenderContext for RenderContext<'_, '_> {
             dash: if style.dash_pattern.is_empty() {
                 None
             } else {
-                let dashes = style.dash_pattern.iter().map(|&x| x as f32).collect();
+                let dashes = {
+                    let mut dashes = mem::take(&mut self.cache.dash_buffer);
+                    dashes.clear();
+                    dashes.extend(style.dash_pattern.iter().map(|&x| x as f32));
+                    dashes
+                };
+
                 ts::StrokeDash::new(dashes, style.dash_offset as f32)
             },
             ..Default::default()
@@ -385,7 +440,9 @@ impl piet::RenderContext for RenderContext<'_, '_> {
             "Failed to create shader"
         );
 
-        self.stroke_impl(shape, shader, stroke)
+        self.stroke_impl(shape, shader, &stroke);
+
+        // TODO: Add a way to restore dashes to tiny-skia
     }
 
     fn fill(&mut self, shape: impl kurbo::Shape, brush: &impl piet::IntoBrush<Self>) {
@@ -531,19 +588,8 @@ impl piet::RenderContext for RenderContext<'_, '_> {
         dst_rect: impl Into<kurbo::Rect>,
         interp: piet::InterpolationMode,
     ) {
-        let bounds = kurbo::Rect::new(
-            0.0,
-            0.0,
-            image.0.width().into(),
-            image.0.height().into(),
-        );
-
-        self.draw_image_area(
-            image,
-            bounds,
-            dst_rect,
-            interp,
-        );
+        let bounds = kurbo::Rect::new(0.0, 0.0, image.0.width().into(), image.0.height().into());
+        self.draw_image_area(image, bounds, dst_rect, interp);
     }
 
     fn draw_image_area(
@@ -560,6 +606,7 @@ impl piet::RenderContext for RenderContext<'_, '_> {
         let scale_y = dst_rect.height() / src_rect.height();
 
         let transform = Affine::translate(-src_rect.origin().to_vec2())
+            * Affine::translate(dst_rect.origin().to_vec2())
             * Affine::scale_non_uniform(scale_x, scale_y);
 
         self.fill_impl(
@@ -584,10 +631,10 @@ impl piet::RenderContext for RenderContext<'_, '_> {
             let src_rect = src_rect.into();
 
             match ts::IntRect::from_xywh(
-                src_rect.x0 as i32,
-                src_rect.y0 as i32,
-                src_rect.width() as u32,
-                src_rect.height() as u32,
+                (src_rect.x0 * self.bitmap_scale) as i32,
+                (src_rect.y0 * self.bitmap_scale) as i32,
+                (src_rect.width() * self.bitmap_scale) as u32,
+                (src_rect.height() * self.bitmap_scale) as u32,
             ) {
                 Some(src_rect) => src_rect,
                 None => return Err(Pierror::InvalidInput),
@@ -631,8 +678,8 @@ impl Brush {
                 tiny_skia::Transform::identity(),
             ),
             BrushInner::RadialGradient(radial) => tiny_skia::RadialGradient::new(
+                cvt_point(radial.center + radial.origin_offset),
                 cvt_point(radial.center),
-                cvt_point(radial.center - radial.origin_offset),
                 radial.radius as f32,
                 radial
                     .stops
@@ -742,6 +789,93 @@ impl piet::TextLayout for TextLayout {
 
     fn hit_test_text_position(&self, idx: usize) -> piet::HitTestPosition {
         self.0.hit_test_text_position(idx)
+    }
+}
+
+struct ZenoShape<'a> {
+    cmds: &'a [ZenoCommand],
+    offset: kurbo::TranslateScale,
+}
+
+impl Shape for ZenoShape<'_> {
+    type PathElementsIter<'iter> = ZenoIter<'iter> where Self: 'iter;
+
+    fn path_elements(&self, _tolerance: f64) -> Self::PathElementsIter<'_> {
+        ZenoIter {
+            inner: self.cmds.iter(),
+            offset: self.offset,
+        }
+    }
+
+    fn area(&self) -> f64 {
+        self.to_path(1.0).area()
+    }
+
+    fn perimeter(&self, accuracy: f64) -> f64 {
+        self.to_path(accuracy).perimeter(accuracy)
+    }
+
+    fn winding(&self, pt: kurbo::Point) -> i32 {
+        self.to_path(1.0).winding(pt)
+    }
+
+    fn bounding_box(&self) -> kurbo::Rect {
+        self.to_path(1.0).bounding_box()
+    }
+}
+
+#[derive(Clone)]
+struct ZenoIter<'a> {
+    inner: slice::Iter<'a, ZenoCommand>,
+    offset: kurbo::TranslateScale,
+}
+
+impl ZenoIter<'_> {
+    fn leap(&self) -> impl Fn(&ZenoCommand) -> kurbo::PathEl {
+        let offset = self.offset;
+        move |&cmd| offset * cvt_zeno_command(cmd)
+    }
+}
+
+impl Iterator for ZenoIter<'_> {
+    type Item = kurbo::PathEl;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(self.leap())
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.inner.nth(n).map(self.leap())
+    }
+
+    fn fold<B, F>(self, init: B, f: F) -> B
+    where
+        Self: Sized,
+        F: FnMut(B, Self::Item) -> B,
+    {
+        let m = self.leap();
+        self.inner.map(m).fold(init, f)
+    }
+}
+
+fn cvt_zeno_command(cmd: ZenoCommand) -> kurbo::PathEl {
+    let cvt_vector = |v: zeno::Vector| {
+        let [x, y]: [f32; 2] = v.into();
+        kurbo::Point::new(x as f64, y as f64)
+    };
+
+    match cmd {
+        ZenoCommand::Close => kurbo::PathEl::ClosePath,
+        ZenoCommand::MoveTo(p) => kurbo::PathEl::MoveTo(cvt_vector(p)),
+        ZenoCommand::LineTo(p) => kurbo::PathEl::LineTo(cvt_vector(p)),
+        ZenoCommand::QuadTo(p1, p2) => kurbo::PathEl::QuadTo(cvt_vector(p1), cvt_vector(p2)),
+        ZenoCommand::CurveTo(p1, p2, p3) => {
+            kurbo::PathEl::CurveTo(cvt_vector(p1), cvt_vector(p2), cvt_vector(p3))
+        }
     }
 }
 

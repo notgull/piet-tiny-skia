@@ -2,8 +2,14 @@
 name = "piet-tiny-skia"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "LGPL-3.0-or-later OR MPL-2.0"
+rust-version = "1.65.0"
+authors = ["John Nunley <jtnunley01@gmail.com>"]
+repository = "https://github.com/notgull/piet-tiny-skia"
+homepage = "https://github.com/notgull/piet-tiny-skia"
+keywords = ["gpu", "graphics", "2d"]
+categories = ["rendering::graphics-api"]
+description = "A two-dimensional vector graphics implementation atop tiny-skia"
 
 [dependencies]
 cosmic-text = { version = "0.9.0", default-features = false, features = ["swash"] }
@@ -12,6 +18,7 @@ piet-cosmic-text = { version = "0.3.0" }
 swash = { version = "0.1.8", default-features = false, features = ["scale"] }
 tiny-skia = { version = "0.11.1", default-features = false, features = ["std"] }
 tinyvec = { version = "1.6.0", features = ["alloc"] }
+zeno = { version = "0.2.2", default-features = false }
 
 [dev-dependencies]
 piet = { version = "0.6.2", features = ["samples"] }
