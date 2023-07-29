@@ -1,0 +1,18 @@
+[package]
+name = "piet-tiny-skia"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cosmic-text = { version = "0.9.0", default-features = false, features = ["swash"] }
+piet = "0.6.2"
+piet-cosmic-text = { version = "0.3.0" }
+swash = { version = "0.1.8", default-features = false, features = ["scale"] }
+tiny-skia = { version = "0.11.1", default-features = false, features = ["std"] }
+tinyvec = { version = "1.6.0", features = ["alloc"] }
+
+[dev-dependencies]
+piet = { version = "0.6.2", features = ["samples"] }
+tiny-skia = "0.11.1"
