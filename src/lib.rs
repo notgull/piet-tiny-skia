@@ -261,6 +261,24 @@ impl<T: AsPixmapMut + ?Sized> RenderContext<'_, T> {
         self.tolerance = tolerance;
     }
 
+    /// Get the inner target.
+    pub fn target(&self) -> &T {
+        &self.target
+    }
+
+    /// Get the inner target.
+    pub fn target_mut(&mut self) -> &mut T {
+        &mut self.target
+    }
+
+    /// Unwrap this type and reduce it to the inner target.
+    pub fn into_target(self) -> T
+    where
+        T: Sized,
+    {
+        self.target
+    }
+
     fn fill_impl(
         &mut self,
         shape: impl Shape,
