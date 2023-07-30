@@ -30,6 +30,11 @@
 //! To start, create a `tiny_skia::PixmapMut` and a [`Cache`]. Then, use the [`Cache`] to create a
 //! [`RenderContext`] to render into the pixmap. Finally the pixmap can be saved to a file or
 //! rendered elsewhere.
+//!
+//! [Skia]: https://skia.org/
+//! [`cosmic-text`]: https://crates.io/crates/cosmic-text
+//! [`piet`]: https://crates.io/crates/piet
+//! [`tiny-skia`]: https://crates.io/crates/tiny-skia
 
 #![forbid(unsafe_code, future_incompatible)]
 
@@ -48,6 +53,38 @@ use std::slice;
 use tiny_skia as ts;
 use tinyvec::TinyVec;
 use ts::{Mask, PathBuilder, PixmapMut, Shader};
+
+/// Trait to get a `PixmapMut` from some type.
+///
+/// This allows the [`RenderContext`] to be wrapped around borrowed or owned types, without regard
+/// for the storage medium.
+pub trait AsPixmapMut {
+    /// Get a `PixmapMut` from this type.
+    fn as_pixmap_mut(&mut self) -> PixmapMut<'_>;
+}
+
+impl<T: AsPixmapMut + ?Sized> AsPixmapMut for &mut T {
+    fn as_pixmap_mut(&mut self) -> PixmapMut<'_> {
+        (**self).as_pixmap_mut()
+    }
+}
+
+impl<'a> AsPixmapMut for PixmapMut<'a> {
+    fn as_pixmap_mut(&mut self) -> PixmapMut<'_> {
+        // Awful strategy for reborrowing.
+        let width = self.width();
+        let height = self.height();
+
+        PixmapMut::from_bytes(self.data_mut(), width, height)
+            .expect("PixmapMut::from_bytes should succeed")
+    }
+}
+
+impl AsPixmapMut for ts::Pixmap {
+    fn as_pixmap_mut(&mut self) -> PixmapMut<'_> {
+        self.as_mut()
+    }
+}
 
 /// The cache for [`tiny-skia`] resources.
 ///
@@ -85,12 +122,9 @@ impl Default for Cache {
 }
 
 /// The whole point.
-pub struct RenderContext<'cache, 'target> {
+pub struct RenderContext<'cache, Target: ?Sized> {
     /// The mutable reference to the cache.
     cache: &'cache mut Cache,
-
-    /// The mutable reference to the target.
-    target: PixmapMut<'target>,
 
     /// The last error that occurred.
     last_error: Result<(), Pierror>,
@@ -106,6 +140,9 @@ pub struct RenderContext<'cache, 'target> {
 
     /// Flag to ignore the current state.
     ignore_state: bool,
+
+    /// The mutable reference to the target.
+    target: Target,
 }
 
 /// Rendering state frame.
@@ -127,6 +164,8 @@ impl Default for RenderState {
 }
 
 /// The text renderer for [`tiny-skia`].
+///
+/// [`tiny-skia`]: https://crates.io/crates/tiny-skia
 #[derive(Debug, Clone)]
 pub struct Text(piet_cosmic_text::Text);
 
@@ -145,14 +184,20 @@ impl Text {
 }
 
 /// The text layout builder for [`tiny-skia`].
+///
+/// [`tiny-skia`]: https://crates.io/crates/tiny-skia
 #[derive(Debug)]
 pub struct TextLayoutBuilder(piet_cosmic_text::TextLayoutBuilder);
 
 /// The text layout for [`tiny-skia`].
+///
+/// [`tiny-skia`]: https://crates.io/crates/tiny-skia
 #[derive(Debug, Clone)]
 pub struct TextLayout(piet_cosmic_text::TextLayout);
 
 /// The brush for [`tiny-skia`].
+///
+/// [`tiny-skia`]: https://crates.io/crates/tiny-skia
 #[derive(Clone)]
 pub struct Brush(BrushInner);
 
@@ -179,10 +224,10 @@ impl Cache {
     }
 
     /// Gets a render context for the provided target pixmap.
-    pub fn render_context<'cache, 'target>(
-        &'cache mut self,
-        target: PixmapMut<'target>,
-    ) -> RenderContext<'cache, 'target> {
+    pub fn render_context<Target: AsPixmapMut>(
+        &mut self,
+        target: Target,
+    ) -> RenderContext<'_, Target> {
         RenderContext {
             cache: self,
             target,
@@ -195,7 +240,7 @@ impl Cache {
     }
 }
 
-impl RenderContext<'_, '_> {
+impl<T: AsPixmapMut + ?Sized> RenderContext<'_, T> {
     /// Get the bitmap scale.
     pub fn bitmap_scale(&self) -> f64 {
         self.bitmap_scale
@@ -258,7 +303,9 @@ impl RenderContext<'_, '_> {
             (cvt_affine(real_transform), state.clip.as_ref())
         };
 
-        target.fill_path(&path, &paint, rule, transform, mask);
+        target
+            .as_pixmap_mut()
+            .fill_path(&path, &paint, rule, transform, mask);
 
         // Keep the allocation around.
         self.cache.path_builder = Some(path.clear());
@@ -306,7 +353,9 @@ impl RenderContext<'_, '_> {
             (cvt_affine(real_transform), state.clip.as_ref())
         };
 
-        target.stroke_path(&path, &paint, stroke, transform, mask);
+        target
+            .as_pixmap_mut()
+            .stroke_path(&path, &paint, stroke, transform, mask);
 
         // Keep the allocation around.
         self.cache.path_builder = Some(path.clear());
@@ -402,7 +451,7 @@ macro_rules! leap {
     }};
 }
 
-impl piet::RenderContext for RenderContext<'_, '_> {
+impl<T: AsPixmapMut + ?Sized> piet::RenderContext for RenderContext<'_, T> {
     type Brush = Brush;
     type Image = Image;
     type Text = Text;
@@ -457,7 +506,7 @@ impl piet::RenderContext for RenderContext<'_, '_> {
             self.ignore_state = false;
         } else {
             // Flood-fill the image with this color.
-            self.target.fill(cvt_color(color));
+            self.target.as_pixmap_mut().fill(cvt_color(color));
         }
     }
 
@@ -548,7 +597,8 @@ impl piet::RenderContext for RenderContext<'_, '_> {
         match &mut current_state.clip {
             slot @ None => {
                 // Create a new clip mask.
-                let mut clip = Mask::new(self.target.width(), self.target.height())
+                let target = self.target.as_pixmap_mut();
+                let mut clip = Mask::new(target.width(), target.height())
                     .expect("Pixmap width/height should be valid clipmask width/height");
                 clip.fill_path(&path, tiny_skia::FillRule::EvenOdd, false, bitmap_scale);
                 *slot = Some(clip);
@@ -721,6 +771,7 @@ impl piet::RenderContext for RenderContext<'_, '_> {
         };
 
         self.target
+            .as_pixmap_mut()
             .as_ref()
             .clone_rect(src_rect)
             .ok_or_else(|| Pierror::InvalidInput)
@@ -815,10 +866,10 @@ impl Brush {
     }
 }
 
-impl piet::IntoBrush<RenderContext<'_, '_>> for Brush {
+impl<T: AsPixmapMut + ?Sized> piet::IntoBrush<RenderContext<'_, T>> for Brush {
     fn make_brush<'b>(
         &'b self,
-        _piet: &mut RenderContext<'_, '_>,
+        _piet: &mut RenderContext<'_, T>,
         _bbox: impl FnOnce() -> kurbo::Rect,
     ) -> std::borrow::Cow<'b, Brush> {
         std::borrow::Cow::Borrowed(self)
