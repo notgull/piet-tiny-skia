@@ -31,8 +31,10 @@ fn main() {
 
             let mut pixmap = ts::Pixmap::new(scaled_width, scaled_height).unwrap();
             let mut cache = piet_tiny_skia::Cache::new();
+
             let mut rc = cache.render_context(pixmap.as_mut());
             rc.set_bitmap_scale(scale);
+            piet::RenderContext::text(&mut rc).set_dpi(72.0);
 
             // Render the picture.
             picture.draw(&mut rc)?;

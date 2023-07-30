@@ -7,9 +7,6 @@
 // * GNU Lesser General Public License as published by the Free Software Foundation, either
 // version 3 of the License, or (at your option) any later version.
 // * Mozilla Public License as published by the Mozilla Foundation, version 2.
-// * The Patron License (https://github.com/notgull/piet-tiny-skia/blob/main/LICENSE-PATRON.md)
-//   for sponsors and contributors, who can ignore the copyleft provisions of the above licenses
-//   for this project.
 //
 // `piet-tiny-skia` is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -19,9 +16,24 @@
 // Public License along with `piet-tiny-skia`. If not, see <https://www.gnu.org/licenses/>.
 
 //! A [`piet`] frontend for the [`tiny-skia`] framework.
+//!
+//! [`tiny-skia`] is a very high-quality implementation of software rendering, based on the
+//! algorithms used by [Skia]. It is the fastest software renderer in the Rust community and it
+//! produces high-quality results. However, the feature set of the crate is intentionally limited
+//! so that what is there is fast and correct.
+//!
+//! This crate, `piet-tiny-skia`, provides a [`piet`]-based frontend for [`tiny-skia`] that may be
+//! more familiar to users of popular graphics APIs. It may be easier to use than the [`tiny-skia`]
+//! API while also maintaining the flexibility. It also provides text rendering, provided by the
+//! [`cosmic-text`] crate.
+//!
+//! To start, create a `tiny_skia::PixmapMut` and a [`Cache`]. Then, use the [`Cache`] to create a
+//! [`RenderContext`] to render into the pixmap. Finally the pixmap can be saved to a file or
+//! rendered elsewhere.
 
-#![forbid(unsafe_code)]
+#![forbid(unsafe_code, future_incompatible)]
 
+// Public dependencies.
 pub use piet;
 pub use tiny_skia;
 
@@ -29,6 +41,7 @@ use cosmic_text::{Command as ZenoCommand, SwashCache};
 use piet::kurbo::{self, Affine, PathEl, Shape};
 use piet::Error as Pierror;
 
+use std::fmt;
 use std::mem;
 use std::slice;
 
@@ -37,6 +50,9 @@ use tinyvec::TinyVec;
 use ts::{Mask, PathBuilder, PixmapMut, Shader};
 
 /// The cache for [`tiny-skia`] resources.
+///
+/// This type contains some resources that can be shared between render contexts. This sharing
+/// reduces the number of allocations involved in the process of rendering.
 pub struct Cache {
     /// Cached path builder.
     path_builder: Option<PathBuilder>,
@@ -49,6 +65,12 @@ pub struct Cache {
 
     /// Allocation to hold dashes in.
     dash_buffer: Vec<f32>,
+}
+
+impl fmt::Debug for Cache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad("Cache { .. }")
+    }
 }
 
 impl Default for Cache {
@@ -108,6 +130,20 @@ impl Default for RenderState {
 #[derive(Debug, Clone)]
 pub struct Text(piet_cosmic_text::Text);
 
+impl Text {
+    /// Get the current DPI for the text renderer.
+    #[inline]
+    pub fn dpi(&self) -> f64 {
+        self.0.dpi()
+    }
+
+    /// Set the current DPI for the text renderer.
+    #[inline]
+    pub fn set_dpi(&mut self, dpi: f64) {
+        self.0.set_dpi(dpi);
+    }
+}
+
 /// The text layout builder for [`tiny-skia`].
 #[derive(Debug)]
 pub struct TextLayoutBuilder(piet_cosmic_text::TextLayoutBuilder);
@@ -142,7 +178,7 @@ impl Cache {
         Self::default()
     }
 
-    /// Gets a render context for the provided target.
+    /// Gets a render context for the provided target pixmap.
     pub fn render_context<'cache, 'target>(
         &'cache mut self,
         target: PixmapMut<'target>,
@@ -168,6 +204,16 @@ impl RenderContext<'_, '_> {
     /// Set the bitmap scale.
     pub fn set_bitmap_scale(&mut self, scale: f64) {
         self.bitmap_scale = scale;
+    }
+
+    /// Get the flattening tolerance.
+    pub fn tolerance(&self) -> f64 {
+        self.tolerance
+    }
+
+    /// Set the flattening tolerance.
+    pub fn set_tolerance(&mut self, tolerance: f64) {
+        self.tolerance = tolerance;
     }
 
     fn fill_impl(
@@ -279,16 +325,26 @@ impl RenderContext<'_, '_> {
         self.cache.text.clone().0.with_font_system_mut(|system| {
             // Try to get the font outline, which we can draw directly with tiny-skia.
             if let Some(outline) = glyph_cache.get_outline_commands(system, physical.cache_key) {
-                let offset = kurbo::TranslateScale::new(
-                    kurbo::Vec2::new(
-                        pos.x + physical.x as f64 + physical.cache_key.x_bin.as_float() as f64,
-                        pos.y
-                            + run_y as f64
-                            + physical.y as f64
-                            + physical.cache_key.y_bin.as_float() as f64,
-                    ),
-                    1.0,
-                );
+                // Q: Why go through the trouble of rendering the glyph outlines like this, instead
+                // of just using rasterized images?
+                //
+                // A: If we render the glyphs as curves and we scale up the image, the curves will
+                // scale up as well, preventing the "blurry text" issue that happens with rasterized
+                // images. In addition it feels more "pure" to work the font rendering directly
+                // into tiny-skia.
+                //
+                // By the way, I know that tiny-skia is looking to add text drawing support. If
+                // you're reading this and want to try porting parts of this to tiny-skia, feel
+                // free to use it. I hereby release all of the text rendering code in this file
+                // and in piet-cosmic-text under the 3-clause BSD license that tiny-skia uses, as
+                // long as it goes to tiny-skia.
+                let offset = kurbo::Affine::translate((
+                    pos.x + physical.x as f64 + physical.cache_key.x_bin.as_float() as f64,
+                    pos.y
+                        + run_y as f64
+                        + physical.y as f64
+                        + physical.cache_key.y_bin.as_float() as f64,
+                )) * Affine::scale_non_uniform(1.0, -1.0);
                 let color = glyph.color_opt.map_or(
                     {
                         let (r, g, b, a) = piet::util::DEFAULT_TEXT_COLOR.as_rgba();
@@ -301,6 +357,7 @@ impl RenderContext<'_, '_> {
                     },
                 );
 
+                // Fill in the outline.
                 self.fill_impl(
                     ZenoShape {
                         cmds: outline,
@@ -319,6 +376,7 @@ impl RenderContext<'_, '_> {
                     let [r, g, b, a] = [clr.r(), clr.g(), clr.b(), clr.a()];
                     let color = ts::Color::from_rgba8(r, g, b, a);
 
+                    // Straight-blit the image.
                     self.fill_impl(
                         kurbo::Rect::from_origin_size((x as f64, y as f64), (1., 1.)),
                         Shader::SolidColor(color),
@@ -368,19 +426,27 @@ impl piet::RenderContext for RenderContext<'_, '_> {
         }))
     }
 
-    fn clear(&mut self, region: impl Into<Option<kurbo::Rect>>, color: piet::Color) {
+    fn clear(&mut self, region: impl Into<Option<kurbo::Rect>>, mut color: piet::Color) {
         let region = region.into();
-        let state = self.states.last().unwrap();
 
-        if region.is_none() || state.clip.is_none() {
-            self.target.fill(cvt_color(color));
-        } else {
-            let region = region.unwrap_or(kurbo::Rect::new(
-                0.0,
-                0.0,
-                self.target.width() as f64,
-                self.target.height() as f64,
-            ));
+        // Pre-multiply the color.
+        let clamp = |x: f64| {
+            if x < 0.0 {
+                0.0
+            } else if x > 1.0 {
+                1.0
+            } else {
+                x
+            }
+        };
+        let (r, g, b, a) = color.as_rgba();
+        let r = clamp(r * a);
+        let g = clamp(g * a);
+        let b = clamp(b * a);
+        color = piet::Color::rgba(r, g, b, 1.0);
+
+        if let Some(region) = region {
+            // Fill the shape without clipping or transforming.
             self.ignore_state = true;
             self.fill_impl(
                 region,
@@ -389,6 +455,9 @@ impl piet::RenderContext for RenderContext<'_, '_> {
             );
             // TODO: Preserve this even in a panic.
             self.ignore_state = false;
+        } else {
+            // Flood-fill the image with this color.
+            self.target.fill(cvt_color(color));
         }
     }
 
@@ -511,6 +580,16 @@ impl piet::RenderContext for RenderContext<'_, '_> {
 
                 self.draw_glyph(pos, glyph, run.line_y);
             }
+        }
+
+        // Draw the lines.
+        let mov = pos.to_vec2();
+        for line in line_processor.lines() {
+            self.fill_impl(
+                line.into_rect() + mov,
+                Shader::SolidColor(cvt_color(line.color)),
+                ts::FillRule::EvenOdd,
+            );
         }
     }
 
@@ -650,11 +729,54 @@ impl piet::RenderContext for RenderContext<'_, '_> {
 
     fn blurred_rect(
         &mut self,
-        _rect: kurbo::Rect,
-        _blur_radius: f64,
-        _brush: &impl piet::IntoBrush<Self>,
+        input_rect: kurbo::Rect,
+        blur_radius: f64,
+        brush: &impl piet::IntoBrush<Self>,
     ) {
-        self.last_error = Err(Pierror::Unimplemented);
+        let size = piet::util::size_for_blurred_rect(input_rect, blur_radius);
+        let width = size.width as u32;
+        let height = size.height as u32;
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        // Compute the blurred rectangle image.
+        let (mask, rect_exp) = {
+            let mut mask = Mask::new(width, height).unwrap();
+
+            let rect_exp = piet::util::compute_blurred_rect(
+                input_rect,
+                blur_radius,
+                width.try_into().unwrap(),
+                mask.data_mut(),
+            );
+
+            (mask, rect_exp)
+        };
+
+        // Create an image using this mask.
+        let mut image = Image(
+            ts::Pixmap::new(width, height)
+                .expect("Pixmap width/height should be valid clipmask width/height"),
+        );
+        let shader = leap!(
+            self,
+            brush.make_brush(self, || input_rect).to_shader(),
+            "Failed to create shader"
+        );
+        image.0.fill(ts::Color::TRANSPARENT);
+        image.0.fill_rect(
+            ts::Rect::from_xywh(0., 0., width as f32, height as f32).unwrap(),
+            &ts::Paint {
+                shader,
+                ..Default::default()
+            },
+            ts::Transform::identity(),
+            Some(&mask),
+        );
+
+        // Render this image.
+        self.draw_image(&image, rect_exp, piet::InterpolationMode::Bilinear);
     }
 
     fn current_transform(&self) -> Affine {
@@ -794,7 +916,7 @@ impl piet::TextLayout for TextLayout {
 
 struct ZenoShape<'a> {
     cmds: &'a [ZenoCommand],
-    offset: kurbo::TranslateScale,
+    offset: kurbo::Affine,
 }
 
 impl Shape for ZenoShape<'_> {
@@ -827,7 +949,7 @@ impl Shape for ZenoShape<'_> {
 #[derive(Clone)]
 struct ZenoIter<'a> {
     inner: slice::Iter<'a, ZenoCommand>,
-    offset: kurbo::TranslateScale,
+    offset: kurbo::Affine,
 }
 
 impl ZenoIter<'_> {
