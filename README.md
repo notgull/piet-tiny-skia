@@ -3,7 +3,7 @@
 A `piet` frontend for the `tiny-skia` framework.
 
 `tiny-skia` is a very high-quality implementation of software rendering, based on the
-algorithms used by [Skia]. It is the fastest software renderer in the Rust community and it
+algorithms used by Skia. It is the fastest software renderer in the Rust community and it
 produces high-quality results. However, the feature set of the crate is intentionally limited
 so that what is there is fast and correct.
 
