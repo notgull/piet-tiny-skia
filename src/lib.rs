@@ -553,6 +553,12 @@ impl<T: AsPixmapMut + ?Sized> piet::RenderContext for RenderContext<'_, T> {
                     let mut dashes = mem::take(&mut self.cache.dash_buffer);
                     dashes.clear();
                     dashes.extend(style.dash_pattern.iter().map(|&x| x as f32));
+
+                    // If the length is odd, double it to make it even.
+                    if dashes.len() % 2 != 0 {
+                        dashes.extend_from_within(0..dashes.len() - 1);
+                    }
+
                     dashes
                 };
 
