@@ -2,6 +2,8 @@
 
 A `piet` frontend for the `tiny-skia` framework.
 
+This repository is hosted on [SourceHut](https://git.sr.ht/~notgull/piet-tiny-skia). The GitHub mirror is kept for convenience.
+
 `tiny-skia` is a very high-quality implementation of software rendering, based on the
 algorithms used by Skia. It is the fastest software renderer in the Rust community and it
 produces high-quality results. However, the feature set of the crate is intentionally limited
