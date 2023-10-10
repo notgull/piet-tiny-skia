@@ -10,10 +10,10 @@ tasks:
 - install_rust:
     curl https://sh.rustup.rs -sSf | sh -s -- -y
 - test: |
-    cd line-straddler
+    cd piet-tiny-skia
     sh ci/ci.sh 
 - mirror: |
-    cd line-straddler
+    cd piet-tiny-skia
     ssh-keyscan -H -t rsa github.com  >> ~/.ssh/known_hosts
     git remote add github_origin git@github.com:notgull/piet-tiny-skia.git
     git push github_origin main
