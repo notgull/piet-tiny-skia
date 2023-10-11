@@ -21,8 +21,7 @@ pts_check_target() {
   echo ">> Check for $target using $command"
   rustup target add "$target"
   rx cargo "$command" --target "$target"
-  rx cargo "$command" --target "$target" --no-default-features \
-      --features libm
+  rx cargo "$command" --target "$target" --no-default-features
   cargo clean
 }
 
