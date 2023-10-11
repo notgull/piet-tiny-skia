@@ -2,6 +2,10 @@ image: debian/testing
 packages:
 - clang
 - curl
+- libx11-dev
+- libx11-xcb-dev
+- libxcb1-dev
+- libxkbcommon-dev
 sources:
 - https://git.sr.ht/~notgull/piet-tiny-skia
 secrets:
