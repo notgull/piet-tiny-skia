@@ -1,6 +1,6 @@
 # Contribution
 
-We welcome contributions to this project. Please feel free to open GitHub issues, pull requests, or comments.
+We welcome contributions to this project. Please do not open issues or pull requests on the GitHub mirror. Please open tickets on our [`todo.sr.ht`](https://todo.sr.ht/~notgull/theo) page and submit patches to our [mailing list](https://lists.sr.ht/~notgull/theo-devel).
 
 ## Coding Style
 
@@ -11,9 +11,9 @@ We welcome contributions to this project. Please feel free to open GitHub issues
 
 ## Testing
 
-All changes submitted to this repository are run through GitHub Actions and the workflow defined into the [`ci.yml`] file. If your change does not pass the tests described, it is unlikely to be merged.
+All changes submitted to this repository are run through GitHub Actions and the workflow defined into the [`ci.sh`] file. If your change does not pass the tests described, it is unlikely to be merged.
 
-[`ci.yml`]: https://github.com/notgull/piet-tiny-skia/blob/main/.github/workflows/ci.yml
+[`ci.sh`]: https://git.sr.ht/~notgull/piet-tiny-skia/tree/main/item/ci/ci.sh
 
 ## DCO
 
