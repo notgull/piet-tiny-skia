@@ -1,12 +1,12 @@
 [package]
 name = "piet-tiny-skia"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "LGPL-3.0-or-later OR MPL-2.0"
 rust-version = "1.65.0"
 authors = ["John Nunley <dev@notgull.net>"]
-repository = "https://git.sr.ht/~notgull/piet-tiny-skia"
-homepage = "https://git.sr.ht/~notgull/piet-tiny-skia"
+repository = "https://src.notgull.net/notgull/piet-tiny-skia"
+homepage = "https://src.notgull.net/notgull/piet-tiny-skia"
 keywords = ["gpu", "graphics", "2d"]
 categories = ["rendering::graphics-api"]
 description = "A two-dimensional vector graphics implementation atop tiny-skia"
