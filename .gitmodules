@@ -1,3 +1,3 @@
 [submodule "samples"]
 	path = samples
-	url = https://git.sr.ht/~notgull/piet-tiny-skia-samples
+	url = https://src.notgull.net/notgull/piet-tiny-skia-samples.git
