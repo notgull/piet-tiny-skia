@@ -19,10 +19,10 @@ saved to a file or rendered elsewhere.
 
 ## Source Code
 
-The canonical code for this repository is kept on our [Git Forge]. For
+The canonical code for this repository is kept on [Codeberg]. For
 convenience, a mirror is kept on [GitHub].
 
-[Git Forge]: https://src.notgull.net/notgull/piet-cosmic-text
+[Codeberg]: https://codeberg.org/notgull/piet-cosmic-text
 [GitHub]: https://github.com/notgull/piet-cosmic-text
 
 ## License
