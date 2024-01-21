@@ -32,7 +32,7 @@ steps:
     image: rust:alpine
     commands:
       - apk --no-cache update -q
-      - apk --no-cache add ${PACKAGES}
+      - apk --no-cache add $PACKAGES
       - update-ms-fonts
       - fc-cache -fv
       - rustup default ${RUST_VERSION}
