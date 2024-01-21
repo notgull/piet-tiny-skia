@@ -29,11 +29,10 @@ steps:
       PACKAGES: libx11-dev libxcb1-dev libxkbcommon-dev libx11-xcb-dev
 
   compare_samples:
-    image: rust
+    image: rust:alpine
     commands:
-      - add-apt-repository multiverse
-      - apt-get -o Acquire::Retries=10 -qq update
-      - apt-get -o Acquire::Retries=10 -o Dpkg::Use-Pty=0 install -y --no-install-recommends $PACKAGES 
+      - apk --no-cache update -q
+      - apk --no-cache add ${PACKAGES}
       - rustup default ${RUST_VERSION}
       - mkdir -pv /tmp/samples
       - cargo run --example samples -- --all --out=/tmp/samples --compare=/tmp/samples --scale=2.0
@@ -47,4 +46,4 @@ steps:
       RUSTFLAGS: "-D warnings"
       RUSTDOCFLAGS: "-D warnings"
       RUSTUP_MAX_RETRIES: "10"
-      PACKAGES: libx11-dev libxcb1-dev libxkbcommon-dev libx11-xcb-dev ttf-mscorefonts-installer
+      PACKAGES: libx11-dev libxcb-dev libxkbcommon-dev libx11-xcb-dev msttcorefonts-installer
