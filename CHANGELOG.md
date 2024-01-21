@@ -1,5 +1,9 @@
 # piet-tiny-skia Changelog
 
+## v0.2.3
+
+- Move source code to codeberg.org
+
 ## v0.2.2
 
 - Move source code to src.notgull.net
