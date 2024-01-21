@@ -31,6 +31,7 @@ steps:
   compare_samples:
     image: rust
     commands:
+      - add-apt-repository multiverse
       - apt-get -o Acquire::Retries=10 -qq update
       - apt-get -o Acquire::Retries=10 -o Dpkg::Use-Pty=0 install -y --no-install-recommends $PACKAGES 
       - rustup default ${RUST_VERSION}
