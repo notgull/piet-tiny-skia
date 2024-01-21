@@ -33,6 +33,8 @@ steps:
     commands:
       - apk --no-cache update -q
       - apk --no-cache add ${PACKAGES}
+      - update-ms-fonts
+      - fc-cache -fv
       - rustup default ${RUST_VERSION}
       - mkdir -pv /tmp/samples
       - cargo run --example samples -- --all --out=/tmp/samples --compare=/tmp/samples --scale=2.0
