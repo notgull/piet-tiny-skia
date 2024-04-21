@@ -50,4 +50,4 @@ steps:
       RUSTFLAGS: "-D warnings"
       RUSTDOCFLAGS: "-D warnings"
       RUSTUP_MAX_RETRIES: "10"
-      PACKAGES: libx11-dev libxcb-dev libxkbcommon-dev msttcorefonts-installer fontconfig
+      PACKAGES: libc-dev libx11-dev libxcb-dev libxkbcommon-dev msttcorefonts-installer fontconfig
