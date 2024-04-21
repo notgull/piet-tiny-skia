@@ -1,9 +1,11 @@
 when:
+- event: push
   branch: main
+- event: pull_request
 
 matrix:
   RUST_VERSION:
-   - "1.65.0"
+   - "1.66.0"
 
 steps:
   msrv:
